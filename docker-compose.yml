@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: croxpost-db
+    environment:
+      POSTGRES_DB: croxpost
+      POSTGRES_USER: croxpost
+      POSTGRES_PASSWORD: croxpost123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U croxpost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - croxpost-network
+
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: croxpost-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - croxpost-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: croxpost-backend
+    environment:
+      - DATABASE_URL=postgresql://croxpost:croxpost123@db:5432/croxpost
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-this-in-production
+    volumes:
+      - ./backend:/app
+      - media_uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - croxpost-network
+    command: >
+      sh -c "
+        pip install alembic &&
+        cd /app &&
+        alembic init alembic 2>/dev/null || true &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: croxpost-frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000/api
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - croxpost-network
+    stdin_open: true
+    tty: true
+
+volumes:
+  postgres_data:
+  media_uploads:
+
+networks:
+  croxpost-network:
+    driver: bridge

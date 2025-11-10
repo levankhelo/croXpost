@@ -1,0 +1,1 @@
+"""Platform publishers initialization"""
